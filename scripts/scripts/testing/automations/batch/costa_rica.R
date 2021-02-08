@@ -1,66 +1,29 @@
-url <- "https://datawrapper.dwcdn.net/OmMQp/"
+library(dplyr)
 
-while (TRUE) {
-    page <- read_html(url)
-    equiv <- page %>%
-        html_node("meta") %>%
-        html_attr("http-equiv")
+minus <- function(x) sum(x[1],na.rm=T) - sum(x[2],na.rm=T)
 
-    if (any(equiv == "REFRESH") & !is.na(equiv)) {
-        url <- page %>%
-            html_node("meta") %>%
-            html_attr("content") %>%
-            str_extract("\\d+/$") %>%
-            paste0("https://datawrapper.dwcdn.net/OmMQp/", .)
-    } else {
-        break
-    }
-}
+url <- "https://geovision.uned.ac.cr/oges/archivos_covid/2021_02_04/02_04_21_CSV_GENERAL.csv"
 
-data <- read_html(url) %>%
-    html_nodes("script") %>%
-    html_text() %>%
-    str_extract("chartData.*isPreview") %>%
-    na.omit() %>%
-    str_split("n") %>%
-    unlist %>%
-    str_extract_all("\\d+")
+df <- fread(url, showProgress = FALSE, 
+            select = c("nue_posi", "conf_nexo","nue_descar", "FECHA"))
 
-d <- sapply(data, FUN = `[`, 1)
-m <- sapply(data, FUN = `[`, 2)
-y <- sapply(data, FUN = `[`, 3)
-confirma <- sapply(data, FUN = `[`, 4) %>% as.integer()
-descarga <- sapply(data, FUN = `[`, 5) %>% as.integer()
-dates <- ymd(paste(y, m, d, sep = "-"), quiet = TRUE)
+df$lab_pos <- apply(df[,c("nue_posi","conf_nexo")],1,minus)
+df$sum <- rowSums(df[,c("lab_pos", "nue_descar")], na.rm=TRUE)
 
-df <- data.table(
-    Date = dates,
-    Confirmed = confirma,
-    Discarded = descarga,
-    Country = "Costa Rica",
-    Units = "people tested",
-    `Source URL` = "https://observador.cr/covid19-estadisticas/",
-    `Source label` = "Ministry of Health",
-    Notes = NA_character_,
-    `Testing type` = "includes non-PCR"
-)
+df[, `Positive rate` := round(frollsum(lab_pos, 7) / frollsum(sum, 7), 3)]
 
-# Early data point reported by the official source but missing from the graph
-# See https://owid.slack.com/archives/C011DSUBY6A/p1596231838050800
-df[Date == "2020-03-25" & Discarded == 5, Discarded := 65]
-df[Date == "2020-03-25" & Discarded == 5, `Source URL` := "https://www.ministeriodesalud.go.cr/sobre_ministerio/prensa/img_cvd/img_datos_marzo_2020_15.jpeg"]
-# https://owid.slack.com/archives/C011DSUBY6A/p1601911640008800
-df[Date == "2020-03-15", Discarded := Discarded + 72]
+df <- select(df, sum, FECHA, `Positive rate`) 
+df <- df[df$sum != 0,]
 
-df[, `Daily change in cumulative total` := Confirmed + Discarded]
+setnames(df, c("Daily change in cumulative total", "Date", "Positive rate"))
 
-# Mistakes in data reported by El Observador
-df[Date == "2020-09-06", `Daily change in cumulative total` := 2142]
-df[Date == "2020-09-07", `Daily change in cumulative total` := 1556]
+df[, Date := dmy(Date)]
+df[, Country := "Costa Rica"]
+df[, Units := "people tested"]
+df[, `Source URL` := "https://geovision.uned.ac.cr/oges/"]
+df[, `Source label` := "Ministry of Health"]
+df[, Notes := NA_character_]
 
-df[, c("Confirmed", "Discarded") := NULL]
-df <- df[!is.na(`Daily change in cumulative total`)]
+setorder(df, -Date)
 
-stopifnot(nrow(df) > 0)
-
-fwrite(df, "automated_sheets/Costa Rica.csv")
+fwrite(df, "automated_sheets/Costa_Rica.csv")
